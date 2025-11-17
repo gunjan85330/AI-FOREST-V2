@@ -7,7 +7,7 @@ import os
 
 st.set_page_config(page_title="AI FOREST Wildfire Risk", layout="wide")
 
-st.title(" AI-FOREST Wildfire Prediction & Spread Simulation")
+st.title("AI-FOREST Wildfire Prediction & Spread Simulation")
 
 
 # ============================================================
@@ -20,7 +20,7 @@ PARQUET_PATH = "master_with_lags.parquet"
 @st.cache_resource
 def load_dataset():
     if not os.path.exists(PARQUET_PATH):
-        st.write(" Downloading dataset (~300MB)...")
+        st.write("Downloading dataset (~300MB)...")
         gdown.download(PARQUET_URL, PARQUET_PATH, quiet=False)
 
     df = pd.read_parquet(PARQUET_PATH)
@@ -70,7 +70,7 @@ FEATURES = [
 # 4) PREDICT RISK PANEL
 # ============================================================
 
-st.header(" Fire Risk Prediction")
+st.header("Fire Risk Prediction")
 
 lat = st.number_input("Latitude", value=29.7)
 lon = st.number_input("Longitude", value=80.3)
@@ -87,7 +87,7 @@ if st.button("Predict Fire Risk"):
 
     prob = model.predict_proba(sample)[0][1]
 
-    st.subheader(f" Predicted Fire Risk: **{prob:.4f}**")
+    st.subheader(f"Predicted Fire Risk: {prob:.4f}")
 
 
 # ============================================================
@@ -95,35 +95,27 @@ if st.button("Predict Fire Risk"):
 # ============================================================
 
 def build_neighbors(df):
-    # Convert to numeric, force invalid values to NaN
     df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
     df["lon"] = pd.to_numeric(df["lon"], errors="coerce")
 
-    # Replace inf / -inf with nan
     df["lat"].replace([np.inf, -np.inf], np.nan, inplace=True)
     df["lon"].replace([np.inf, -np.inf], np.nan, inplace=True)
 
-    # Drop unusable rows
     df = df.dropna(subset=["lat", "lon"]).reset_index(drop=True)
 
-    # Detect spacing
     lat_step = df["lat"].diff().abs().median()
     lon_step = df["lon"].diff().abs().median()
 
-    # If spacing fails, force fallback
     if pd.isna(lat_step) or lat_step == 0:
         lat_step = 0.01
     if pd.isna(lon_step) or lon_step == 0:
         lon_step = 0.01
 
-    # SAFE integer assignments
     df["lat_r"] = (df["lat"] / lat_step).replace([np.inf, -np.inf], 0).fillna(0).round().astype(int)
     df["lon_r"] = (df["lon"] / lon_step).replace([np.inf, -np.inf], 0).fillna(0).round().astype(int)
 
-    # Build mapping
     cell_to_idx = {(r.lat_r, r.lon_r): i for i, r in df.iterrows()}
 
-    # Build neighbor list
     neighbors = [[] for _ in range(len(df))]
     directions = [(1,0),(-1,0),(0,1),(0,-1),(1,1),(1,-1),(-1,1),(-1,-1)]
 
@@ -135,34 +127,28 @@ def build_neighbors(df):
 
     return neighbors, df
 
-# ============================================================
-# Build neighbors USING STREAMLIT CACHE 
-# ============================================================
 
+# Cache neighbors
 @st.cache_resource
 def get_neighbors_cached(df):
-    neighbors, df_clean = build_neighbors(df)
-    return neighbors, df_clean
+    return build_neighbors(df)
 
 neighbors, df = get_neighbors_cached(df)
-
-
 
 
 # ============================================================
 # 6) FIRE SPREAD SIMULATION
 # ============================================================
 
-st.header(" Fire Spread Simulation")
+st.header("Fire Spread Simulation")
 
 start_lat = st.number_input("Ignition Latitude", value=29.7)
 start_lon = st.number_input("Ignition Longitude", value=80.3)
 steps = st.slider("Steps", 1, 20, 10)
-spread_factor = st.slider("Spread Factor (0–1)", 0.0, 1.0, 0.5)
+spread_factor = st.slider("Spread Factor (0 to 1)", 0.0, 1.0, 0.5)
 
 if st.button("Run Simulation"):
 
-    # Find starting cell
     dist = ((df["lat"] - start_lat).abs() + (df["lon"] - start_lon).abs())
     start_idx = dist.idxmin()
 
@@ -185,7 +171,7 @@ if st.button("Run Simulation"):
         burning = burning.union(new_fire)
         history.append(burning.copy())
 
-    st.subheader(" Simulation Complete")
+    st.subheader("Simulation Complete")
     st.write(f"Total burned cells: {len(burning)}")
 
     for t, burnset in enumerate(history):
