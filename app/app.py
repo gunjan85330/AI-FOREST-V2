@@ -95,24 +95,35 @@ if st.button("Predict Fire Risk"):
 # ============================================================
 
 def build_neighbors(df):
+    # Convert to numeric, force invalid values to NaN
+    df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
+    df["lon"] = pd.to_numeric(df["lon"], errors="coerce")
 
-    # Detect grid spacing
+    # Replace inf / -inf with nan
+    df["lat"].replace([np.inf, -np.inf], np.nan, inplace=True)
+    df["lon"].replace([np.inf, -np.inf], np.nan, inplace=True)
+
+    # Drop unusable rows
+    df = df.dropna(subset=["lat", "lon"]).reset_index(drop=True)
+
+    # Detect spacing
     lat_step = df["lat"].diff().abs().median()
     lon_step = df["lon"].diff().abs().median()
 
+    # If spacing fails, force fallback
     if pd.isna(lat_step) or lat_step == 0:
         lat_step = 0.01
     if pd.isna(lon_step) or lon_step == 0:
         lon_step = 0.01
 
-    # Grid indices
-    df["lat_r"] = (df["lat"] / lat_step).round().fillna(0).astype(int)
-    df["lon_r"] = (df["lon"] / lon_step).round().fillna(0).astype(int)
+    # SAFE integer assignments
+    df["lat_r"] = (df["lat"] / lat_step).replace([np.inf, -np.inf], 0).fillna(0).round().astype(int)
+    df["lon_r"] = (df["lon"] / lon_step).replace([np.inf, -np.inf], 0).fillna(0).round().astype(int)
 
-    # Location mapping
+    # Build mapping
     cell_to_idx = {(r.lat_r, r.lon_r): i for i, r in df.iterrows()}
 
-    # Build neighbors
+    # Build neighbor list
     neighbors = [[] for _ in range(len(df))]
     directions = [(1,0),(-1,0),(0,1),(0,-1),(1,1),(1,-1),(-1,1),(-1,-1)]
 
@@ -124,7 +135,6 @@ def build_neighbors(df):
 
     return neighbors, df
 
-neighbors, df = build_neighbors(df)
 
 
 # ============================================================
