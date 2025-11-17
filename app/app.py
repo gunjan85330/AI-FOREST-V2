@@ -135,6 +135,18 @@ def build_neighbors(df):
 
     return neighbors, df
 
+# ============================================================
+# Build neighbors USING STREAMLIT CACHE 
+# ============================================================
+
+@st.cache_resource
+def get_neighbors_cached(df):
+    neighbors, df_clean = build_neighbors(df)
+    return neighbors, df_clean
+
+neighbors, df = get_neighbors_cached(df)
+
+
 
 
 # ============================================================
