@@ -40,9 +40,19 @@ model = load_model()
 st.success("Model loaded successfully!")
 
 
-# ============================================================
-# RISK PREDICTION PANEL
-# ============================================================
+# ====================  MODEL FEATURE LIST  ====================
+FEATURES = [
+ 'temp_c','rain_mm','wind_u','wind_v','pressure','wind','humidity','vpd',
+ 'fire_today_lag_1','fire_today_lag_3','fire_today_lag_7',
+ 'temp_c_lag_1','temp_c_lag_3','temp_c_lag_7',
+ 'rain_mm_lag_1','rain_mm_lag_3','rain_mm_lag_7',
+ 'humidity_lag_1','humidity_lag_3','humidity_lag_7',
+ 'vpd_lag_1','vpd_lag_3','vpd_lag_7',
+ 'wind_lag_1','wind_lag_3','wind_lag_7',
+ 'wind_u_lag_1','wind_u_lag_3','wind_u_lag_7',
+ 'wind_v_lag_1','wind_v_lag_3','wind_v_lag_7',
+ 'pressure_lag_1','pressure_lag_3','pressure_lag_7'
+]
 
 st.header(" Fire Risk Prediction")
 
@@ -50,12 +60,22 @@ lat = st.number_input("Latitude:", value=29.7)
 lon = st.number_input("Longitude:", value=80.3)
 
 if st.button("Predict Risk"):
-    sample = df.iloc[:1].copy()
-    sample["lat"] = lat
-    sample["lon"] = lon
 
+    # Find nearest grid cell
+    dist = ((df["lat"] - lat).abs() + (df["lon"] - lon).abs())
+    idx = dist.idxmin()
+
+    # Extract ONLY required features
+    sample = df.loc[idx, FEATURES].to_frame().T
+
+    # Ensure no missing values
+    sample = sample.fillna(0)
+
+    # Predict
     prob = model.predict_proba(sample)[0][1]
+
     st.subheader(f" Predicted Fire Risk: **{prob:.4f}**")
+
 
 
 # ============================================================
@@ -100,7 +120,9 @@ if st.button("Run Simulation"):
         new_fire = set()
         for cell in burning:
             for n in neighbors[cell]:
-                risk = model.predict_proba(df.iloc[[n]])[0][1]
+                sample = df.loc[n, FEATURES].to_frame().T
+                risk = model.predict_proba(sample)[0][1]
+
                 if risk > spread_factor:
                     new_fire.add(n)
         burning = burning.union(new_fire)
