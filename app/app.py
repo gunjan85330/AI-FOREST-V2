@@ -5,31 +5,39 @@ import joblib
 import gdown
 import os
 
-st.set_page_config(page_title="AI-FOREST Wildfire Risk App", layout="wide")
+st.set_page_config(page_title="AI FOREST Wildfire Risk", layout="wide")
 
-st.title(" AI-FOREST Wildfire Risk & Simulation App")
+st.title(" AI-FOREST Wildfire Prediction & Spread Simulation")
+
 
 # ============================================================
-# STEP 1 — DOWNLOAD LARGE PARQUET FILE FROM GOOGLE DRIVE
+# 1) DOWNLOAD LARGE PARQUET FILE FROM GOOGLE DRIVE
 # ============================================================
 
 PARQUET_URL = "https://drive.google.com/uc?id=1W2NwAwKVtz-jQcAZaKUAT4aDpUj-GNlv"
-
 PARQUET_PATH = "master_with_lags.parquet"
 
 @st.cache_resource
-def download_parquet():
+def load_dataset():
     if not os.path.exists(PARQUET_PATH):
-        st.write("Downloading dataset (~300MB)...")
+        st.write(" Downloading dataset (~300MB)...")
         gdown.download(PARQUET_URL, PARQUET_PATH, quiet=False)
-    return pd.read_parquet(PARQUET_PATH)
 
-df = download_parquet()
+    df = pd.read_parquet(PARQUET_PATH)
+
+    # Clean lat/lon
+    df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
+    df["lon"] = pd.to_numeric(df["lon"], errors="coerce")
+
+    df = df.dropna(subset=["lat", "lon"]).reset_index(drop=True)
+    return df
+
+df = load_dataset()
 st.success("Dataset loaded successfully!")
 
 
 # ============================================================
-# STEP 2 — LOAD MODEL FROM LOCAL REPO
+# 2) LOAD MODEL
 # ============================================================
 
 @st.cache_resource
@@ -40,7 +48,10 @@ model = load_model()
 st.success("Model loaded successfully!")
 
 
-# ====================  MODEL FEATURE LIST  ====================
+# ============================================================
+# 3) MODEL FEATURES
+# ============================================================
+
 FEATURES = [
  'temp_c','rain_mm','wind_u','wind_v','pressure','wind','humidity','vpd',
  'fire_today_lag_1','fire_today_lag_3','fire_today_lag_7',
@@ -54,83 +65,106 @@ FEATURES = [
  'pressure_lag_1','pressure_lag_3','pressure_lag_7'
 ]
 
+
+# ============================================================
+# 4) PREDICT RISK PANEL
+# ============================================================
+
 st.header(" Fire Risk Prediction")
 
-lat = st.number_input("Latitude:", value=29.7)
-lon = st.number_input("Longitude:", value=80.3)
+lat = st.number_input("Latitude", value=29.7)
+lon = st.number_input("Longitude", value=80.3)
 
-if st.button("Predict Risk"):
+if st.button("Predict Fire Risk"):
 
     # Find nearest grid cell
     dist = ((df["lat"] - lat).abs() + (df["lon"] - lon).abs())
     idx = dist.idxmin()
 
-    # Extract ONLY required features
+    # Use only required model features
     sample = df.loc[idx, FEATURES].to_frame().T
-
-    # Ensure no missing values
     sample = sample.fillna(0)
 
-    # Predict
     prob = model.predict_proba(sample)[0][1]
 
     st.subheader(f" Predicted Fire Risk: **{prob:.4f}**")
 
 
+# ============================================================
+# 5) BUILD NEIGHBOR GRID FOR SIMULATION
+# ============================================================
+
+def build_neighbors(df):
+
+    # Detect grid spacing
+    lat_step = df["lat"].diff().abs().median()
+    lon_step = df["lon"].diff().abs().median()
+
+    if pd.isna(lat_step) or lat_step == 0:
+        lat_step = 0.01
+    if pd.isna(lon_step) or lon_step == 0:
+        lon_step = 0.01
+
+    # Grid indices
+    df["lat_r"] = (df["lat"] / lat_step).round().fillna(0).astype(int)
+    df["lon_r"] = (df["lon"] / lon_step).round().fillna(0).astype(int)
+
+    # Location mapping
+    cell_to_idx = {(r.lat_r, r.lon_r): i for i, r in df.iterrows()}
+
+    # Build neighbors
+    neighbors = [[] for _ in range(len(df))]
+    directions = [(1,0),(-1,0),(0,1),(0,-1),(1,1),(1,-1),(-1,1),(-1,-1)]
+
+    for i, r in df.iterrows():
+        for dlat, dlon in directions:
+            key = (r.lat_r + dlat, r.lon_r + dlon)
+            if key in cell_to_idx:
+                neighbors[i].append(cell_to_idx[key])
+
+    return neighbors, df
+
+neighbors, df = build_neighbors(df)
+
 
 # ============================================================
-# FIRE SPREAD SIMULATION PANEL
+# 6) FIRE SPREAD SIMULATION
 # ============================================================
 
 st.header(" Fire Spread Simulation")
 
-# Pre-compute neighbors
-def build_neighbors(df):
-    lat_step = df.lat.diff().abs().median()
-    lon_step = df.lon.diff().abs().median()
-
-    df["lat_r"] = (df.lat / lat_step).round().astype(int)
-    df["lon_r"] = (df.lon / lon_step).round().astype(int)
-
-    cell_to_idx = {(r.lat_r, r.lon_r): i for i, r in df.iterrows()}
-
-    neighbors = [[] for _ in range(len(df))]
-    for i, r in df.iterrows():
-        for dlat, dlon in [(1,0),(-1,0),(0,1),(0,-1),(1,1),(1,-1),(-1,1),(-1,-1)]:
-            key = (r.lat_r + dlat, r.lon_r + dlon)
-            if key in cell_to_idx:
-                neighbors[i].append(cell_to_idx[key])
-    return neighbors
-
-neighbors = build_neighbors(df)
-
-start_lat = st.number_input("Ignition Point Latitude", value=29.7)
-start_lon = st.number_input("Ignition Point Longitude", value=80.3)
-steps = st.slider("Simulation Steps", 1, 20, 10)
-spread_factor = st.slider("Spread Speed Factor", 0.0, 1.0, 0.5)
+start_lat = st.number_input("Ignition Latitude", value=29.7)
+start_lon = st.number_input("Ignition Longitude", value=80.3)
+steps = st.slider("Steps", 1, 20, 10)
+spread_factor = st.slider("Spread Factor (0–1)", 0.0, 1.0, 0.5)
 
 if st.button("Run Simulation"):
-    dist = np.abs(df.lat - start_lat) + np.abs(df.lon - start_lon)
+
+    # Find starting cell
+    dist = ((df["lat"] - start_lat).abs() + (df["lon"] - start_lon).abs())
     start_idx = dist.idxmin()
 
     burning = {start_idx}
-    burned_history = [burning.copy()]
+    history = [burning.copy()]
 
     for _ in range(steps):
         new_fire = set()
+
         for cell in burning:
             for n in neighbors[cell]:
                 sample = df.loc[n, FEATURES].to_frame().T
+                sample = sample.fillna(0)
+
                 risk = model.predict_proba(sample)[0][1]
 
                 if risk > spread_factor:
                     new_fire.add(n)
+
         burning = burning.union(new_fire)
-        burned_history.append(burning.copy())
+        history.append(burning.copy())
 
-    st.subheader(" Simulation Completed")
-    st.write(f"Total burned cells after {steps} steps: {len(burning)}")
+    st.subheader(" Simulation Complete")
+    st.write(f"Total burned cells: {len(burning)}")
 
-    st.write("Simulation (step-by-step):")
-    for t, burnset in enumerate(burned_history):
+    for t, burnset in enumerate(history):
         st.write(f"Step {t}: {len(burnset)} burning cells")
