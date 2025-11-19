@@ -94,15 +94,17 @@ if st.button("Predict Fire Risk"):
     st.subheader(f"Predicted Fire Risk: {prob:.4f}")
 
 # ============================================================
-# 6) FIRE SPREAD SIMULATION (KD-TREE VERSION)
+# 6) FIRE SPREAD SIMULATION (ADVANCED)
 # ============================================================
 
 st.header("Fire Spread Simulation")
 
 start_lat = st.number_input("Ignition Latitude", value=29.7)
 start_lon = st.number_input("Ignition Longitude", value=80.3)
-steps = st.slider("Steps", 1, 20, 10)
-spread_factor = st.slider("Spread Factor (0–1)", 0.0, 1.0, 0.5)
+steps = st.slider("Steps", 1, 50, 15)
+spread_factor = st.slider("Base Spread Threshold", 0.0, 1.0, 0.05)
+
+import random
 
 if st.button("Run Simulation"):
 
@@ -113,26 +115,37 @@ if st.button("Run Simulation"):
     burning = {start_idx}
     history = [burning.copy()]
 
-    for _ in range(steps):
+    for step in range(steps):
         new_fire = set()
 
         for cell in burning:
-            # Find nearest 20 neighbors
-            d, inds = tree.query(df.loc[[cell], ["lat", "lon"]], k=20)
-            neighbors = inds[0][1:]   # exclude itself
+
+            # Get up to 100 nearest neighbors
+            _, inds = tree.query(df.loc[[cell], ["lat", "lon"]], k=100)
+            neighbors = inds[0][1:]
 
             for n in neighbors:
+
+                # Weather features
                 sample = df.loc[n, FEATURES].to_frame().T.fillna(0)
                 risk = model.predict_proba(sample)[0][1]
 
-                if risk > spread_factor:
+                # Dynamic threshold: fire spreads more easily with more burning around
+                local_factor = spread_factor * (1 - min(len(burning) / 300, 0.8))
+
+                # Probabilistic ignition
+                random_threshold = random.uniform(0, 1)
+
+                # Combined ignition rule
+                if risk > local_factor and (risk + random.uniform(0,0.1)) > random_threshold:
                     new_fire.add(n)
 
+        # Update burned area
         burning = burning.union(new_fire)
         history.append(burning.copy())
 
     st.subheader("Simulation Complete")
     st.write(f"Total burned cells after {steps} steps: {len(burning)}")
-
+    
     for t, burnset in enumerate(history):
         st.write(f"Step {t}: {len(burnset)} burning cells")
